@@ -81,7 +81,7 @@ class sichel_gen(scipy.stats.rv_discrete):
                 pmf[i] = (pmf[0] * (mu * w / alpha) * kv(v+1, alpha) / kv(v, alpha))
         return pmf[k]
 
-    def estimate_params(self, x, w=None):
+    def estimate_params(self, x, bounds, w=None):
         if w is None:
             mean = np.mean(x)
             var = np.var(x)
@@ -183,7 +183,7 @@ class zasichel_gen(scipy.stats.rv_discrete):
         pmf[1:] *= (1 - pi)
         return pmf[k]
 
-    def estimate_params(self, x, w=None):
+    def estimate_params(self, x, bounds, w=None):
         if w is None:
             mean = np.mean(x)
             var = np.var(x)
@@ -206,7 +206,7 @@ class zasichel_gen(scipy.stats.rv_discrete):
             'mu': (0.1, 5),
             'sigma': (0.1, 5),
             'v': (0.1, 5),
-            'pi': (0.01, 0.99),
+            'pi': (0.001, 0.999),
         }
         return bounds
 
@@ -241,7 +241,7 @@ class zapoisson_gen(scipy.stats.rv_discrete):
     def _pmf(self, k, mu, pi):
         return np.exp(self._logpmf(k, mu, pi))
 
-    def estimate_params(self, x, w=None):
+    def estimate_params(self, x, bounds, w=None):
         if w is None:
             mean = np.mean(x)
         else:
@@ -255,7 +255,7 @@ class zapoisson_gen(scipy.stats.rv_discrete):
     def get_bounds(self, x):
         bounds = {
             'mu': (0.1, np.amax(x) * 2),
-            'pi': (0.01, 0.99),
+            'pi': (0.001, 0.999),
         }
         return bounds
 
@@ -294,7 +294,7 @@ class zanbinom_gen(scipy.stats.rv_discrete):
     def _pmf(self, k, n, p, pi):
         return np.exp(self._logpmf(k, n, p, pi))
 
-    def estimate_params(self, x, w=None):
+    def estimate_params(self, x, bounds, w=None):
         if w is None:
             mean = np.mean(x)
             var = np.var(x)
@@ -303,7 +303,8 @@ class zanbinom_gen(scipy.stats.rv_discrete):
             var = np.sum(w * (x - mean) ** 2) / np.sum(w)
         params = {
             'p': mean / var,
-            'n': mean ** 2 / (var - mean),
+            'n': bounds['n'][0],
+            # 'n': mean ** 2 / (var - mean),
             'pi': np.sum(x == 0) / x.size,
         }
         return params
@@ -311,9 +312,9 @@ class zanbinom_gen(scipy.stats.rv_discrete):
     def get_bounds(self, x):
         maxval = np.amax(x)
         bounds = {
-            'p': (0.01, 0.99),
-            'n': (0, int(maxval * 2)),
-            'pi': (0.01, 0.99),
+            'p': (0.001, 0.999),
+            'n': (int(maxval), int(maxval)+1),
+            'pi': (0.001, 0.999),
         }
         return bounds
 
@@ -356,7 +357,7 @@ class zabetanbinom_gen(scipy.stats.rv_discrete):
     def _pmf(self, k, n, a, b, pi):
         return np.exp(self._logpmf(k, n, a, b, pi))
 
-    def estimate_params(self, x, w=None):
+    def estimate_params(self, x, bounds, w=None):
         if w is None:
             mean = np.mean(x)
             var = np.var(x)
@@ -368,7 +369,8 @@ class zabetanbinom_gen(scipy.stats.rv_discrete):
         p = min(1, mean / var)
         v = (p * (1 - p) / 0.03) - 1
         params = {
-            'n': int(max(1.0, mean**2 / (var-mean))),
+            # 'n': int(max(1.0, mean**2 / (var-mean))),
+            'n': bounds['n'][0],
             'a': max(1.01, mean * v),
             'b': max(0.01, (1 - mean) * v),
             'pi': np.sum(x == 0) / x.size,
@@ -380,15 +382,15 @@ class zabetanbinom_gen(scipy.stats.rv_discrete):
         bounds = {
             'a': (2.01, 10),
             'b': (0.01, 10),
-            'n': (0, int(maxval * 2)),
-            'pi': (0.01, 0.99),
+            'n': (int(maxval), int(maxval)+1),
+            'pi': (0.001, 0.999),
         }
         return bounds
 
 
 class binom_gen(scipy.stats._discrete_distns.binom_gen):
 
-    def estimate_params(self, x, w=None):
+    def estimate_params(self, x, bounds, w=None):
         if w is None:
             mean = np.mean(x)
         else:
@@ -396,22 +398,22 @@ class binom_gen(scipy.stats._discrete_distns.binom_gen):
         maxval = np.amax(x)
         params = {
             'p': mean / maxval,
-            'n': maxval, 
+            'n': bounds['n'][0], 
         }
         return params
 
     def get_bounds(self, x):
         maxval = np.amax(x)
         bounds = {
-            'p': (0.01, 0.99),
-            'n': (int(maxval * 0.5), int(maxval * 2)),
+            'p': (0.001, 0.999),
+            'n': (int(maxval), int(maxval)+1),
         }
         return bounds
 
 
 class nbinom_gen(scipy.stats._discrete_distns.nbinom_gen):
 
-    def estimate_params(self, x, w=None):
+    def estimate_params(self, x, bounds, w=None):
         if w is None:
             mean = np.mean(x)
             var = np.var(x)
@@ -419,7 +421,8 @@ class nbinom_gen(scipy.stats._discrete_distns.nbinom_gen):
             mean = np.sum(x * w) / np.sum(w)
             var = np.sum(w * (x - mean) ** 2) / np.sum(w)
         params = {
-            'n': mean ** 2 / (var - mean),
+            # 'n': mean ** 2 / (var - mean),
+            'n': bounds['n'][0],
             'p': mean / var,
         }
         return params
@@ -427,15 +430,15 @@ class nbinom_gen(scipy.stats._discrete_distns.nbinom_gen):
     def get_bounds(self, x):
         maxval = np.amax(x)
         bounds = {
-            'p': (0.01, 0.99),
-            'n': (0, int(maxval * 2)),
+            'p': (0.001, 0.999),
+            'n': (int(maxval), int(maxval)+1),
         }
         return bounds
 
 
 class poisson_gen(scipy.stats._discrete_distns.poisson_gen):
 
-    def estimate_params(self, x, w=None):
+    def estimate_params(self, x, bounds, w=None):
         if w is None:
             mean = np.mean(x)
         else:
@@ -455,7 +458,7 @@ class poisson_gen(scipy.stats._discrete_distns.poisson_gen):
 
 class betabinom_gen(scipy.stats._discrete_distns.betabinom_gen):
 
-    def estimate_params(self, x, w=None):
+    def estimate_params(self, x, bounds, w=None):
         maxval = np.amax(x)
         if w is None:
             mean = np.mean(x)
@@ -468,7 +471,7 @@ class betabinom_gen(scipy.stats._discrete_distns.betabinom_gen):
         params = {
             'a': pi / theta,
             'b': (1 - pi) / theta,
-            'n': maxval,
+            'n': bounds['n'][0],
         }
         return params
 
@@ -477,14 +480,14 @@ class betabinom_gen(scipy.stats._discrete_distns.betabinom_gen):
         bounds = {
             'a': (2.01, 20),
             'b': (2.01, 20),
-            'n': (int(maxval), int(maxval * 2)),
+            'n': (int(maxval), int(maxval)+1),
         }
         return bounds
 
 
 class betanbinom_gen(scipy.stats._discrete_distns.betanbinom_gen):
 
-    def estimate_params(self, x, w=None):
+    def estimate_params(self, x, bounds, w=None):
         maxval = np.amax(x)
         if w is None:
             mean = np.mean(x)
@@ -498,7 +501,8 @@ class betanbinom_gen(scipy.stats._discrete_distns.betanbinom_gen):
         var2 = 0.05 ** 2
         v = p * (1 - p) / var2 - 1
         params = {
-            'n': mean * mean / (var - mean),
+            # 'n': mean * mean / (var - mean),
+            'n': bounds['n'][0],
             'a': p * v,
             'b': (1 - p) * v,
         }
@@ -511,7 +515,7 @@ class betanbinom_gen(scipy.stats._discrete_distns.betanbinom_gen):
         bounds = {
             'a': (2.01, 10),
             'b': (0.01, 100),
-            'n': (1, maxval * 2),
+            'n': (int(maxval), int(maxval)+1),
         }
         return bounds
 
@@ -560,20 +564,25 @@ class Distribution():
         return
 
     def set_parameters(self, **kwargs):
+        self.check_parameters(**kwargs)
+        for k, v in kwargs.items():
+            self.params[k] = v
+        return
+
+    def check_parameters(self, **kwargs):
         if not self.dist._argcheck(**kwargs):
             raise ValueError(f"The parameters {kwargs} don't match the distribution {self.name}")
         param_shapes = self.dist._shape_info()
         for ps in param_shapes:
             if ps.integrality:
                 kwargs[ps.name] = int(kwargs[ps.name])
-        for k, v in kwargs.items():
-            self.params[k] = v
+        return kwargs
 
     def estimate_params(self, X, weights=None):
-        params = self.dist.estimate_params(X, weights)
-        for p in params.keys():
-            params[p] = max(self.bounds[p][0], min(self.bounds[p][1], params[p]))
-        return params
+        self.params = self.dist.estimate_params(X, self.bounds, weights)
+        for p in self.params.keys():
+            self.params[p] = max(self.bounds[p][0], min(self.bounds[p][1], self.params[p]))
+        return self.params
 
     def optimize_parameters(self, X, W=None):
         warnings.filterwarnings("ignore")
@@ -585,8 +594,13 @@ class Distribution():
             new_params = {k: v for k, v in fit.params._asdict().items() if k in est_params}
         else:
             def LLH(params, param_names, X, W):
-                param_dict = {param_names[x]: params[x] for x in range(len(params))}
-                return -np.sum(self.dist.logpmf(X, **param_dict) * W)
+                param_dict = {param_names[x]: params[x] for x in range(len(params))
+                              if param_names[x] != 'n'}
+                if 'n' in param_names:
+                    index = param_names.index('n')
+                    return -np.sum(self.dist.logpmf(X, n=params[index], **param_dict) * W)
+                else:
+                    return -np.sum(self.dist.logpmf(X, **param_dict) * W)
 
             params = []
             param_names = []
@@ -598,6 +612,10 @@ class Distribution():
             fit = scipy.optimize.minimize(LLH, np.array(params),
                                           args=(param_names, X, W), bounds=bounds)
             new_params = {param_names[x]: fit.x[x] for x in range(len(params))}
+            if 'n' in self.params:
+                new_params['n'] = self.params['n']
+        new_params = self.check_parameters(**new_params)
+        self.params = new_params
         return new_params
 
     def get_bounds(self, X):

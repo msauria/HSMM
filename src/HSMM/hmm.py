@@ -4,6 +4,7 @@ import sys
 import math
 import multiprocessing
 import multiprocessing.managers
+from multiprocessing.resource_tracker import unregister
 from multiprocessing.shared_memory import SharedMemory
 
 import numpy as np
@@ -71,20 +72,24 @@ class HMM():
         self.smm = multiprocessing.managers.SharedMemoryManager()
         self.smm.start()
         self.pool = multiprocessing.Pool(self.num_threads)
-        self.make_shared_array('sizes', (5,), np.int64,
-                               [self.num_states, self.num_distributions, 0, 0, 0])
-        self.make_shared_array('transition_matrix',
-                               (self.num_states, self.num_states), np.float64,
-                                self.transition_matrix)
-        self.make_shared_array('initial_probabilities',
-                               (self.num_states,), np.float64,
-                               self.initial_probabilities)
+        self._post_enter_actions()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.pool.close()
         self.pool.terminate()
         self.smm.shutdown()
+        return
+
+    def _post_enter_actions(self):
+        self.make_shared_array('sizes', (6,), np.int64,
+                               [self.num_states, self.num_distributions, 0, 0, 0, 0])
+        self.make_shared_array('transition_matrix',
+                               (self.num_states, self.num_states), np.float64,
+                                self.transition_matrix)
+        self.make_shared_array('initial_probabilities',
+                               (self.num_states,), np.float64,
+                               self.initial_probabilities)
         return
 
     def __str__(self):
@@ -146,9 +151,10 @@ class HMM():
                     4096 + 1) * 4096
         if name in self.views and self.views[name].size == new_size:
             return getattr(name)
-        self.delete_shared_array(name)
-        self.views[name] = self.smm.SharedMemory(self.product(shape) *
-                                            np.dtype(dtype).itemsize)
+        if name in self.views:
+            print(name, new_size, self.views[name].size)
+            self.delete_shared_array(name)
+        self.views[name] = self.smm.SharedMemory(new_size)
         self.smm_map[name] = self.views[name].name
         new_data = np.ndarray(shape, dtype, buffer=self.views[name].buf)
         if data is not None:
@@ -157,11 +163,11 @@ class HMM():
         return new_data
 
     def delete_shared_array(self, name):
-        if name not in self.views:
-            return
+        self.views[name].close()
         self.views[name].unlink()
         del self.views[name]
         del self.smm_map[name]
+        print(f'erased {name}')
 
     @classmethod
     def to_log(cls, data):
@@ -202,8 +208,8 @@ class HMM():
     def _generate_sequence_thread(cls, start, end, lengths, dists, RNG, smm_map):
         views = []
         views.append(SharedMemory(smm_map['sizes']))
-        sizes = np.ndarray(5, np.int64, buffer=views[-1].buf)
-        stateN, distN, obsN, seqN, maxN = sizes
+        sizes = np.ndarray(6, np.int64, buffer=views[-1].buf)
+        stateN, distN, obsN, seqN, maxN = sizes[:5]
         views.append(SharedMemory(smm_map['transition_matrix']))
         transitions = np.ndarray((stateN, stateN), np.float64, buffer=views[-1].buf)
         views.append(SharedMemory(smm_map['initial_probabilities']))
@@ -284,13 +290,19 @@ class HMM():
              self.obs_indices[self.thread_seq_indices[1:-1]]) /
             (self.obs_indices[self.thread_seq_indices[1:-1] + 1] -
              self.obs_indices[self.thread_seq_indices[1:-1]])).astype(np.int64)
+        self.thread_obs_indices = np.r_[self.thread_obs_indices[np.where(np.diff(
+            self.thread_obs_indices) > 0)], self.thread_obs_indices[-1]].astype(np.int64)
+        self.thread_seq_indices = np.r_[self.thread_seq_indices[np.where(np.diff(
+            self.thread_seq_indices) > 0)], self.thread_seq_indices[-1]].astype(np.int64)
         return
 
     def cluster_observations(self, set_params=True):
         if self.num_seqs == 0:
             raise RuntimeError("Observations must be loaded before running clustering")
-        kmeans = Kmeans(n_clusters=self.num_states, random_state=self.RNG.spawn(1)[0])
-        states = kmeans.fit_predict(obs)
+        # Can replace random_state with self.RNG once scikit-learn upgrades from RandomState
+        kmeans = KMeans(n_clusters=self.num_states, n_init='auto',
+                        random_state=np.random.RandomState(self.RNG.bit_generator))
+        states = kmeans.fit_predict(self.obs)
         if set_params:
             self.set_dist_estimates(states)
         return states, kmeans.cluster_centers_
@@ -312,7 +324,8 @@ class HMM():
             where = np.where(states == i)[0]
             for j in range(self.num_distributions):
                 self.distributions[i][j].get_bounds(self.obs)
-                self.distributions[i][j].optimize_parameters(obs[where, j])
+                self.distributions[i][j].estimate_params(self.obs[where, j])
+                self.distributions[i][j].optimize_parameters(self.obs[where, j])
         return
 
     def viterbi(self):
@@ -345,8 +358,8 @@ class HMM():
     def _calculate_path_thread(cls, start, end, smm_map):
         views = []
         views.append(SharedMemory(smm_map['sizes']))
-        sizes = np.ndarray(5, np.int64, buffer=views[-1].buf)
-        stateN, distN, obsN, seqN, maxN = sizes
+        sizes = np.ndarray(6, np.int64, buffer=views[-1].buf)
+        stateN, distN, obsN, seqN, maxN = sizes[:5]
         views.append(SharedMemory(smm_map['emissions']))
         emissions = np.ndarray((obsN, stateN), np.float64, buffer=views[-1].buf)
         views.append(SharedMemory(smm_map['transition_matrix']))
@@ -381,7 +394,7 @@ class HMM():
             view.close()
         return start, end, all_states, all_scores
 
-    def train(self, epsilon=1e-16, maxIterations=0):
+    def train(self, epsilon=1e-1, maxIterations=0):
         if self.num_seqs == 0:
             raise RuntimeError("Observations must be loaded before training")
         self.make_shared_array("probs", (self.num_maxes, self.num_states),
@@ -412,10 +425,10 @@ class HMM():
             self.maximization_step()
             if maxIterations > 0 and iteration == maxIterations:
                 break
-            if newLikelihood > oldLikelihood:
-                print(f"Training stopped: new likelihood smaller than old likelihood",
-                      file=sys.stderr)
-                break
+            # if newLikelihood > oldLikelihood:
+            #     print(f"Training stopped: new likelihood smaller than old likelihood",
+            #           file=sys.stderr)
+            #     break
             if iteration % 10 == 0:
                 print(f"Performed iteration {iteration} with loglikelihood {newLikelihood}",
                       file=sys.stderr)
@@ -424,9 +437,9 @@ class HMM():
         print(f"Training successfully completed after {iteration} iterations with loglikelihood {newLikelihood}",
               file=sys.stderr)
         p = self.num_free_parameters()
-        AIC = 2 * newLikelihood + 2 * p
-        BIC = 2 * newLikelihood + p * self.num_obs
-        print(f"AIC: {AIC}\nBIC: {BIC}", file=sys.stderr)
+        self.AIC = 2 * newLikelihood + 2 * p
+        self.BIC = 2 * newLikelihood + p * self.num_obs
+        print(f"AIC: {self.AIC}\nBIC: {self.BIC}", file=sys.stderr)
         return
 
     def num_free_parameters(self):
@@ -451,8 +464,8 @@ class HMM():
     def _probability_thread(cls, sIdx, dIdx, distribution, smm_map):
         views = []
         views.append(SharedMemory(smm_map['sizes']))
-        sizes = np.ndarray(5, np.int64, buffer=views[-1].buf)
-        stateN, distN, obsN, seqN, maxN = sizes
+        sizes = np.ndarray(6, np.int64, buffer=views[-1].buf)
+        stateN, distN, obsN, seqN, maxN = sizes[:5]
         views.append(SharedMemory(smm_map['obs']))
         obs = np.ndarray((obsN, distN), np.int32, buffer=views[-1].buf)
         views.append(SharedMemory(smm_map['probs']))
@@ -481,8 +494,8 @@ class HMM():
     def _emission_thread(cls, start, end, smm_map):
         views = []
         views.append(SharedMemory(smm_map['sizes']))
-        sizes = np.ndarray(5, np.int64, buffer=views[-1].buf)
-        stateN, distN, obsN, seqN, maxN = sizes
+        sizes = np.ndarray(6, np.int64, buffer=views[-1].buf)
+        stateN, distN, obsN, seqN, maxN = sizes[:5]
         views.append(SharedMemory(smm_map['obs']))
         obs = np.ndarray((obsN, distN), np.int32, buffer=views[-1].buf)
         views.append(SharedMemory(smm_map['probs']))
@@ -518,7 +531,7 @@ class HMM():
     def _forwardpass_thread(cls, start, end, smm_map):
         views = []
         views.append(SharedMemory(smm_map['sizes']))
-        sizes = np.ndarray(5, np.int64, buffer=views[-1].buf)
+        sizes = np.ndarray(6, np.int64, buffer=views[-1].buf)
         stateN, distN, obsN, seqN = sizes[:4]
         views.append(SharedMemory(smm_map['emissions']))
         emissions = np.ndarray((obsN, stateN), np.float64, buffer=views[-1].buf)
@@ -558,7 +571,7 @@ class HMM():
     def _backwardpass_thread(cls, start, end, smm_map):
         views = []
         views.append(SharedMemory(smm_map['sizes']))
-        sizes = np.ndarray(5, np.int64, buffer=views[-1].buf)
+        sizes = np.ndarray(6, np.int64, buffer=views[-1].buf)
         stateN, distN, obsN, seqN = sizes[:4]
         views.append(SharedMemory(smm_map['emissions']))
         emissions = np.ndarray((obsN, stateN), np.float64, buffer=views[-1].buf)
@@ -595,7 +608,7 @@ class HMM():
     def _expectation_thread(cls, start, end, smm_map):
         views = []
         views.append(SharedMemory(smm_map['sizes']))
-        sizes = np.ndarray(5, np.int64, buffer=views[-1].buf)
+        sizes = np.ndarray(6, np.int64, buffer=views[-1].buf)
         stateN, distN, obsN, seqN = sizes[:4]
         views.append(SharedMemory(smm_map['alpha']))
         alpha = np.ndarray((obsN, stateN), np.float64, buffer=views[-1].buf)
@@ -660,7 +673,7 @@ class HMM():
     def _maximize_emissions_thread(cls, sIdx, dIdx, distribution, smm_map):
         views = []
         views.append(SharedMemory(smm_map['sizes']))
-        sizes = np.ndarray(5, np.int64, buffer=views[-1].buf)
+        sizes = np.ndarray(6, np.int64, buffer=views[-1].buf)
         stateN, distN, obsN, seqN = sizes[:4]
         views.append(SharedMemory(smm_map['obs']))
         obs = np.ndarray((obsN, distN), np.int32, buffer=views[-1].buf)
@@ -675,7 +688,7 @@ class HMM():
     def _maximize_transitions_thread(cls, start, end, smm_map):
         views = []
         views.append(SharedMemory(smm_map['sizes']))
-        sizes = np.ndarray(5, np.int64, buffer=views[-1].buf)
+        sizes = np.ndarray(6, np.int64, buffer=views[-1].buf)
         stateN, distN, obsN, seqN = sizes[:4]
         views.append(SharedMemory(smm_map['emissions']))
         emissions = np.ndarray((obsN, stateN), np.float64, buffer=views[-1].buf)
@@ -692,11 +705,10 @@ class HMM():
         views.append(SharedMemory(smm_map['obs_indices']))
         obs_indices = np.ndarray((seqN + 1), np.int64, buffer=views[-1].buf)
 
-        new_init_probs = logsumexp(lngamma[obs_indices[start:end], :] -
-                                   logsumexp(lngamma[obs_indices[start:end], :],
-                                             axis=1, keepdims=True), axis=0)
         s = obs_indices[start]
         e = obs_indices[end]
+        new_init_probs = logsumexp(lngamma[s:e, :] - logsumexp(
+            lngamma[s:e, :], axis=1, keepdims=True), axis=0)
         new_trans = np.full((e - s, stateN, stateN), -np.inf, np.float64)
 
         for i in range(start, end):
@@ -711,28 +723,37 @@ class HMM():
             view.close()
         return np.exp(new_init_probs), np.exp(new_trans)
 
-    def save(self, fname):
-        data = {}
-        data['transition_matrix'] = np.copy(self.transition_matrix)
-        data['initial_probabilities'] = np.copy(self.initial_probabilities)
-        data['dist_types'] = np.zeros((self.num_distributions), "<U5")
-        for i in range(self.num_distributions):
-            data['dist_types'][i] = self.distributions[0][i].short_name
-            for j in range(self.num_states):
-                params = self.distributions[j][i].params
+    def save(self, fname, **kwargs):
+        data = {k: v for k, v in kwargs.items() if k != "distributions"}
+        for name in ['transition_matrix', 'initial_probabilities']:
+            if name not in data:
+                data[name] = getattr(self, name)
+        if 'distributions' in kwargs:
+            distributions = kwargs['distributions']
+        else:
+            distributions = self.distributions
+        distN = len(distributions[0])
+        stateN = len(distributions)
+        data['dist_types'] = np.zeros((distN), "<U5")
+        for i in range(distN):
+            data['dist_types'][i] = distributions[0][i].short_name
+            for j in range(stateN):
+                params = distributions[j][i].params
                 dtype = [(k, type(v)) for k, v in params.items()]
-                data[f'{j}.{i}.dist'] = np.zeros(1, dtype=np.dtype(dtype))
+                dname = f'dist.{j}.{i}'
+                data[dname] = np.zeros(1, dtype=np.dtype(dtype))
                 for k, v in params.items():
-                    data[f"{j}.{i}.dist"][k][0] = v
+                    data[dname][k][0] = v
         np.savez(fname, **data)
         return
 
     def load(self, fname):
         temp = np.load(fname)
-        self.transition_matrix = temp['transition_matrix']
-        self.initial_probabilities = temp['initial_probabilities']
-        self.num_states = self.initial_probabilities.shape[0]
+        for name in temp.keys():
+            if not name.startswith('dist'):
+                setattr(self, name, temp[name])
         dist_types = temp['dist_types']
+        self.num_states = self.initial_probabilities.shape[0]
         self.num_distributions = dist_types.shape[0]
         self.distributions = []
         for i in range(self.num_states):
@@ -740,7 +761,7 @@ class HMM():
             for j in range(self.num_distributions):
                 self.distributions[i].append(Distribution(dist_types[j],
                                                           self.RNG.spawn(1)[0]))
-                dist = temp[f"{i}.{j}.dist"]
+                dist = temp[f"dist.{i}.{j}"]
                 params = {}
                 for name in dist.dtype.names:
                     params[name] = dist[name][0]
