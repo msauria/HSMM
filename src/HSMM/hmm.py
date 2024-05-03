@@ -16,6 +16,7 @@ from .distributions import Distribution
 
 class HMM():
     minfloat64 = np.nextafter(0, 1)
+    name = "HMM"
 
     def __init__(
             self,
@@ -69,8 +70,6 @@ class HMM():
     def __enter__(self):
         self.smm_map = {}
         self.views = {}
-        self.smm = multiprocessing.managers.SharedMemoryManager()
-        self.smm.start()
         self.pool = multiprocessing.Pool(self.num_threads)
         self._post_enter_actions()
         return self
@@ -78,7 +77,10 @@ class HMM():
     def __exit__(self, exc_type, exc_value, traceback):
         self.pool.close()
         self.pool.terminate()
-        self.smm.shutdown()
+        for view in self.views.values():
+            view.close()
+            view.unlink()
+        # self.smm.shutdown()
         return
 
     def _post_enter_actions(self):
@@ -93,51 +95,72 @@ class HMM():
         return
 
     def __str__(self):
-        output = [f"HMM with {self.num_states} states and {self.num_distributions} distribution(s)\n"]
-        for i in range(self.num_states):
+        return "\n".join(self.print_model())
+
+    def print_model(self):
+        output = [f"{self.name} with {self.num_states} states and {self.num_distributions} distribution(s)\n"]
+        output += self.print_states(self.distributions)
+        output += self.print_transitions(self.transition_matrix)
+        output += self.print_initprobs(self.initial_probabilities)
+        return output
+
+    def print_states(self, dists):
+        num_states = len(dists)
+        num_dists = len(dists[0])
+        output = []
+        for i in range(num_states):
             output.append(f"  State {i}")
-            for j in range(self.num_distributions):
+            for j in range(num_dists):
                 tmp = []
-                for k, v in self.distributions[i][j].params.items():
+                for k, v in dists[i][j].params.items():
                     if v == np.round(v):
                         tmp.append(f"{k}: {v:d}")
                     else:
                         tmp.append(f"{k}: {v:0.2e}")
                 tmp = "  ".join(tmp)
-                output.append(f"    Distribution {j}: {self.distributions[i][j].name} - {tmp}")
-        output.append(f"\n  Transition Matrix")
-        TM = np.exp(self.transition_matrix)
-        pad = len(str(self.num_states - 1)) + 1
+                output.append(f"    Distribution {j}: {dists[i][j].name} - {tmp}")
+        return output
+
+    def print_transitions(self, transition_matrix):
+        num_states = transition_matrix.shape[0]
+        output = [f"\n  Transition Matrix"]
+        TM = np.exp(transition_matrix)
+        pad = len(str(num_states - 1)) + 1
         pad2 = max([len(f"{x:0.2e}") for x in TM.ravel()])
         tmp = []
-        for i in range(self.num_states):
+        for i in range(num_states):
             p = pad2 - len(str(i))
             p1 = p // 2
             p0 = p - p1
             tmp.append(f"{' '*p0}{i}{' '*p1}")
         tmp = " | ".join(tmp)
         output.append(f"{' '*(pad + 4)} | {tmp}")
-        for i in range(self.num_states):
-            tmp = "-+-".join([f"{'-'*pad2}" for x in range(self.num_states)])
+        for i in range(num_states):
+            tmp = "-+-".join([f"{'-'*pad2}" for x in range(num_states)])
             output.append(f"{' ' * 4}{'-' * pad}-+-{tmp}")
             tmp = " | ".join([f"{x:0.2e}".rjust(pad2) for x in TM[i, :]])
             output.append(f"{' '*4}{str(i).rjust(pad, ' ')} | {tmp}")
-        output.append(f"\n  Initial Probabilities")
-        IP = np.exp(self.initial_probabilities)
+        return output
+
+    def print_initprobs(self, initial_probabilities):
+        num_states = initial_probabilities.shape[0]
+        output = [f"\n  Initial Probabilities"]
+        IP = np.exp(initial_probabilities)
+        pad = len(str(num_states - 1)) + 1
         pad2 = max([len(f"{x:0.2e}") for x in IP])
         tmp = []
-        for i in range(self.num_states):
+        for i in range(num_states):
             p = pad2 - len(str(i))
             p1 = p // 2
             p0 = p - p1
             tmp.append(f"{' '*p0}{i}{' '*p1}")
         tmp = " | ".join(tmp)
         output.append(f"{' '*(pad + 4)} | {tmp}")
-        tmp = "-+-".join([f"{'-'*pad2}" for x in range(self.num_states)])
+        tmp = "-+-".join([f"{'-'*pad2}" for x in range(num_states)])
         output.append(f"{' ' * 4}{'-' * pad}-+-{tmp}")
         tmp = " | ".join([f"{x:0.2e}".rjust(pad2) for x in IP])
         output.append(f"{' '*4}{str(i).rjust(pad, ' ')} | {tmp}")
-        return "\n".join(output) + "\n"
+        return output
 
     @classmethod
     def product(cls, X):
@@ -152,9 +175,8 @@ class HMM():
         if name in self.views and self.views[name].size == new_size:
             return getattr(name)
         if name in self.views:
-            print(name, new_size, self.views[name].size)
             self.delete_shared_array(name)
-        self.views[name] = self.smm.SharedMemory(new_size)
+        self.views[name] = SharedMemory(create=True, size=new_size)
         self.smm_map[name] = self.views[name].name
         new_data = np.ndarray(shape, dtype, buffer=self.views[name].buf)
         if data is not None:
@@ -167,7 +189,7 @@ class HMM():
         self.views[name].unlink()
         del self.views[name]
         del self.smm_map[name]
-        print(f'erased {name}')
+        return
 
     @classmethod
     def to_log(cls, data):

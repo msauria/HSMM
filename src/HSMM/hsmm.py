@@ -11,7 +11,7 @@ from .distributions import Distribution
 
 
 class HSMM(HMM):
-
+    name = "HSMM"
 
     def _post_enter_actions(self):
         self.original_num_states = self.num_states
@@ -36,6 +36,31 @@ class HSMM(HMM):
                                d_init)
         self.distributions = d_dists
         return self
+
+    def print_model(self):
+        output = [f"{self.name} with {self.original_num_states} states and {self.num_distributions} distribution(s)\n"]
+        nd_trans, nd_init, nd_dists = self.convert_dwell_to_nodwell()
+        output += self.print_states(nd_dists)
+        output += self.print_transitions(nd_trans)
+        output += self.print_initprobs(nd_init)
+        return output
+
+    def print_states(self, dists):
+        num_states = len(dists)
+        num_dists = len(dists[0])
+        output = []
+        for i in range(num_states):
+            output.append(f"  State {i} - dwell {self.dwells[i]}")
+            for j in range(num_dists):
+                tmp = []
+                for k, v in dists[i][j].params.items():
+                    if v == np.round(v):
+                        tmp.append(f"{k}: {v:d}")
+                    else:
+                        tmp.append(f"{k}: {v:0.2e}")
+                tmp = "  ".join(tmp)
+                output.append(f"    Distribution {j}: {dists[i][j].name} - {tmp}")
+        return output
 
     def convert_dwell_to_nodwell(self):
         dwell_indices = np.r_[0, np.cumsum(self.dwells)]
