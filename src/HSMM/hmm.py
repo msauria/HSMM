@@ -173,7 +173,7 @@ class HMM():
         new_size = ((self.product(shape) * np.dtype(dtype).itemsize - 1) //
                     4096 + 1) * 4096
         if name in self.views and self.views[name].size == new_size:
-            return getattr(name)
+            return getattr(self, name)
         if name in self.views:
             self.delete_shared_array(name)
         self.views[name] = SharedMemory(create=True, size=new_size)
@@ -359,7 +359,7 @@ class HMM():
                                np.float64)
         self.calculate_probabilities()
         self.calculate_emissions()
-        self.calculate_paths()
+        return self.calculate_paths()
 
     def calculate_paths(self):
         futures = []
@@ -416,7 +416,7 @@ class HMM():
             view.close()
         return start, end, all_states, all_scores
 
-    def train(self, epsilon=1e-1, maxIterations=0):
+    def train(self, epsilon=1e-1, maxIterations=0, update=True):
         if self.num_seqs == 0:
             raise RuntimeError("Observations must be loaded before training")
         self.make_shared_array("probs", (self.num_maxes, self.num_states),
@@ -444,7 +444,8 @@ class HMM():
                 print(f"Initial loglikelihood {newLikelihood}", file=sys.stderr)
             self.calculate_backwardpass()
             self.expectation_step()
-            self.maximization_step()
+            if update:
+                self.maximization_step()
             if maxIterations > 0 and iteration == maxIterations:
                 break
             # if newLikelihood > oldLikelihood:
@@ -454,8 +455,8 @@ class HMM():
             if iteration % 10 == 0:
                 print(f"Performed iteration {iteration} with loglikelihood {newLikelihood}",
                       file=sys.stderr)
-            if math.fabs(oldLikelihood - newLikelihood) <= epsilon:
-                break
+            # if math.fabs(oldLikelihood - newLikelihood) <= epsilon:
+            #     break
         print(f"Training successfully completed after {iteration} iterations with loglikelihood {newLikelihood}",
               file=sys.stderr)
         p = self.num_free_parameters()
@@ -646,17 +647,16 @@ class HMM():
         s = obs_indices[start]
         e = obs_indices[end]
         lngamma[s:e, :] = alpha[s:e, :] + beta[s:e, :]
-        scales = np.zeros(e - s, np.float64)
         for i in range(start, end):
             s, e = obs_indices[i:i+2]
             n = e - s
-            scales[i - start:i - start + n] = logsumexp(lngamma[s, :])
         s = obs_indices[start]
         e = obs_indices[end]
         nz = lngamma[s:e, :] > -np.inf
-        gamma[s:e, :][nz] = np.exp(lngamma[s:e, :][nz] - np.tile(
-            scales.reshape(-1, 1), (1, stateN))[nz])
+        gamma[s:e, :] = lngamma[s:e, :] - np.amax(lngamma[s:e, :],
+                                                  axis=1, keepdims=True)
         gamma[s:e, :][np.logical_not(nz)] = 0
+        gamma[s:e, :][nz] = np.exp(gamma[s:e, :][nz])
         gamma[s:e, :] /= np.sum(gamma[s:e, :], axis=1, keepdims=True)
         for view in views:
             view.close()

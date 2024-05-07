@@ -7,6 +7,7 @@ import numpy
 import HSMM
 import matplotlib.pyplot as plt
 import scipy.stats
+from scipy.special import logsumexp
 
 def main():
 
@@ -47,50 +48,38 @@ def main():
         ax.plot(numpy.arange(maxval + 1), Y, color='blue')
         ax.plot(numpy.arange(maxval), scipy.stats.nbinom.pmf(numpy.arange(maxval), 6, 0.05), color='blue', linestyle='dashed')
         plt.savefig('test_dwells.pdf')
+        plt.close()
 
+        model.load_observations(seqs)
+        model.train(maxIterations=1)
+        dindices = numpy.r_[0, numpy.cumsum(model.dwells)]
+        pre_gamma = model.lngamma
+        gamma = numpy.zeros((pre_gamma.shape[0], 2), numpy.float64)
+        for i in range(dindices.shape[0] - 1):
+            s, e = dindices[i:i+2]
+            gamma[:, i] = numpy.exp(logsumexp(pre_gamma[:, s:e], axis=1))
+        gamma /= numpy.sum(gamma, axis=1, keepdims=True)
 
-    #     counts = numpy.zeros((2, 2), numpy.float64)
-    #     ip = numpy.zeros(2, numpy.float64)
-    #     tm = numpy.zeros((2, 2), numpy.float64)
-    #     for i in range(len(seqs)):
-    #         for j in range(2):
-    #             where = numpy.where(states[i] == j)[0]
-    #             counts[j, 0] += numpy.sum(seqs[i][where])
-    #             counts[j, 1] += where.shape[0]
-    #             tm[j, j] += numpy.sum(numpy.logical_and(
-    #                             states[i][:-1] == j,
-    #                             states[i][1:] == j))
-    #             tm[j, (j+1)%2] += numpy.sum(numpy.logical_and(
-    #                             states[i][:-1] == j,
-    #                             states[i][1:] == (j+1)%2))
-    #         ip[states[i][0]] += 1
-    #     ip /= numpy.sum(ip) / 100
-    #     counts = counts[:, 0] / counts[:, 1] * 100
-    #     tm /= numpy.sum(tm, axis=1, keepdims=True)
-    #     print("Dist p", counts)
-    #     print("Pi", ip)
-    #     print("TM", tm)
-    #     model.save('test_model.npz')
-
-    # with HSMM.HMM(fname='test_model.npz', num_threads=8, seed=2001) as model:
-    #     print(model)
-
-
-    # TM = numpy.array([[0.8, 0.2], [0.2, 0.8]], numpy.float64)
-    # param = [[{"n": 1, "p": 0.3}], [{"n": 1, "p": 0.6}]]
-    # with HSMM.HMM(
-    #         num_states=2,
-    #         num_threads=1,
-    #         distributions=["BI"],
-    #         transition_matrix=TM,
-    #         initial_probabilities=None,
-    #         seed=2001) as model:
-    #     model.set_dist_parameters(param)
-    #     print(model)
-    #     model.load_observations(seqs)
-    #     model.train(maxIterations=20)
-    #     print(model)
-
+        breaks = numpy.r_[0, numpy.where(numpy.diff(gamma[:, 0] > gamma[:, 1]))[0] + 1, gamma.shape[0]]
+        counts = numpy.zeros((1000, 2), numpy.float64)
+        for i in range(breaks.shape[0] - 1):
+            s, e = breaks[i:i+2]
+            if gamma[s, 0] > gamma[s, 1]:
+                index = 0
+            else:
+                index = 1
+            span = e - s - 1
+            if span >= counts.shape[0]:
+                continue
+            counts[span, index] += numpy.mean(gamma[s:e, index])
+        counts /= numpy.sum(counts, axis=0, keepdims=True)
+        end0 = numpy.where(counts[:, 0] > 0)[0][-1] + 1
+        end1 = numpy.where(counts[:, 1] > 0)[0][-1] + 1
+        fig, ax = plt.subplots(1, 1)
+        ax.plot(numpy.arange(end0), counts[:end0, 0], color='red')
+        ax.plot(numpy.arange(end1), counts[:end1, 1], color='blue')
+        plt.savefig('test_kest.pdf')
+        plt.close()
 
 
 if __name__ == "__main__":
