@@ -12,6 +12,7 @@ from scipy.special import logsumexp
 def main():
     RNG = numpy.random.default_rng(34584)
     stateN = 5
+    distN = 2
     TM = numpy.zeros((stateN, stateN), numpy.float64)
     popN = 256
     p_bounds = numpy.linspace(0, 1, stateN + 2)
@@ -25,12 +26,15 @@ def main():
         TM[i, i] = self_prob
         TM[i, :i] = probs[:i]
         TM[i, i+1:] = probs[i:]
-        s, e = p_bounds[i:i+2]
-        span = e - s
-        s += span * 0.05
-        e -= span * 0.05
-        p = RNG.random() * (e - s) + s
-        params.append([{'n':popN, 'p': p}])
+        params.append([])
+        for j in range(distN):
+            x = RNG.choice(p_bounds.shape[0] - 1)
+            s, e = p_bounds[x:x+2]
+            span = e - s
+            s += span * 0.05
+            e -= span * 0.05
+            p = RNG.random() * (e - s) + s
+            params[-1].append({'n':popN, 'p': p})
         dwell_times.append(RNG.poisson(2))
     IP = RNG.random(stateN)
     IP /= numpy.sum(IP)
@@ -38,7 +42,7 @@ def main():
     with HSMM.HSMM(
             num_states=stateN,
             num_threads=11,
-            distributions=["BI"],
+            distributions=["BI", "BI"],
             transition_matrix=TM,
             initial_probabilities=IP,
             seed=2001) as model:
@@ -75,12 +79,13 @@ def main():
         model.train(maxIterations=1, update=False)
 
     for i in range(stateN):
-        change = RNG.random() + 0.5
-        params[i][0]['p'] **= change
+        for j in range(distN):
+            change = RNG.random() + 0.5
+            params[i][j]['p'] **= change
     with HSMM.HSMM(
             num_states=stateN,
             num_threads=11,
-            distributions=["BI"],
+            distributions=["BI", "BI"],
             transition_matrix=None,
             initial_probabilities=None,
             seed=2001) as model:

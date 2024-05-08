@@ -170,7 +170,11 @@ class HSMM(HMM):
                                    np.float64)
         return
 
-    def maximization_step(self):
+    def maximization_step(self, iteration, **kwargs):
+        if 'update_topology' in kwargs:
+            update_topology = max(1, int(kwargs['update_topology']))
+        else:
+            update_topology = 1
         dwell_indices = np.r_[0, np.cumsum(self.dwells)]
         futures = []
         nd_dists = []
@@ -207,7 +211,8 @@ class HSMM(HMM):
         self.initial_probabilities[:] = self.to_log(d_IP)
         self.transition_matrix[:, :] = self.to_log(d_TM)
         self.distributions = d_dists
-        self.maximize_dwell_times()
+        if iteration % update_topology == 0:
+            self.maximize_dwell_times()
         return
 
     @classmethod

@@ -416,7 +416,7 @@ class HMM():
             view.close()
         return start, end, all_states, all_scores
 
-    def train(self, epsilon=1e-1, maxIterations=0, update=True):
+    def train(self, epsilon=1e-1, maxIterations=0, update=True, **kwargs):
         if self.num_seqs == 0:
             raise RuntimeError("Observations must be loaded before training")
         self.make_shared_array("probs", (self.num_maxes, self.num_states),
@@ -437,15 +437,7 @@ class HMM():
         while True:
             iteration += 1
             oldLikelihood = newLikelihood
-            self.calculate_probabilities()
-            self.calculate_emissions()
-            newLikelihood = self.calculate_forwardpass()
-            if iteration == 1:
-                print(f"Initial loglikelihood {newLikelihood}", file=sys.stderr)
-            self.calculate_backwardpass()
-            self.expectation_step()
-            if update:
-                self.maximization_step()
+            newLikelihood = self.training_iteration(iteration, update, **kwargs)
             if maxIterations > 0 and iteration == maxIterations:
                 break
             # if newLikelihood > oldLikelihood:
@@ -464,6 +456,19 @@ class HMM():
         self.BIC = 2 * newLikelihood + p * self.num_obs
         print(f"AIC: {self.AIC}\nBIC: {self.BIC}", file=sys.stderr)
         return
+
+    def training_iteration(self, iteration, update, **kwargs):
+        self.calculate_probabilities()
+        self.calculate_emissions()
+        newLikelihood = self.calculate_forwardpass()
+        if iteration == 1:
+            print(f"Initial loglikelihood {newLikelihood}", file=sys.stderr)
+        self.calculate_backwardpass()
+        self.expectation_step()
+        if update:
+            self.maximization_step(iteration=iteration, **kwargs)
+        return newLikelihood
+
 
     def num_free_parameters(self):
         s = 0
@@ -662,7 +667,7 @@ class HMM():
             view.close()
         return
 
-    def maximization_step(self):
+    def maximization_step(self, **kwargs):
         futures = []
         for i in range(self.num_states):
             for j in range(self.num_distributions):
