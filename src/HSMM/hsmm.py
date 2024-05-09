@@ -60,7 +60,7 @@ class HSMM(HMM):
                 tmp = []
                 for k, v in dists[i][j].params.items():
                     if v == np.round(v):
-                        tmp.append(f"{k}: {v:d}")
+                        tmp.append(f"{k}: {int(v):d}")
                     else:
                         tmp.append(f"{k}: {v:0.2e}")
                 tmp = "  ".join(tmp)

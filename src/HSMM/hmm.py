@@ -65,6 +65,7 @@ class HMM():
         self.num_obs = 0
         self.num_seqs = 0
         self.num_maxes = 0
+        self.likelihood = 0
         return
 
     def __enter__(self):
@@ -114,7 +115,7 @@ class HMM():
                 tmp = []
                 for k, v in dists[i][j].params.items():
                     if v == np.round(v):
-                        tmp.append(f"{k}: {v:d}")
+                        tmp.append(f"{k}: {int(v):d}")
                     else:
                         tmp.append(f"{k}: {v:0.2e}")
                 tmp = "  ".join(tmp)
@@ -438,6 +439,7 @@ class HMM():
             iteration += 1
             oldLikelihood = newLikelihood
             newLikelihood = self.training_iteration(iteration, update, **kwargs)
+            self.likelihood = newLikelihood
             if maxIterations > 0 and iteration == maxIterations:
                 break
             # if newLikelihood > oldLikelihood:
