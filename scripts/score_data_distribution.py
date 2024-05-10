@@ -10,7 +10,7 @@ import HSMM
 def main():
     in_fname, out_fname = sys.argv[1:3]
     all_data = numpy.load(in_fname, mmap_mode='r')
-    N = all_data.shape[0]
+    N = all_data.shape[0]//4
     obs_breaks = numpy.round(numpy.linspace(0, N, 11)).astype(numpy.int32)
     dist_names = list(HSMM.distributions.Distribution.valid_dists.keys())
     dist_names.sort()
@@ -30,13 +30,12 @@ def main():
         for dname in dist_names:
             with HSMM.HSMM(
                     num_states=3,
-                    num_threads=11,
+                    num_threads=10,
                     distributions=[dname],
                     transition_matrix=None,
                     initial_probabilities=None,
                     seed=2001) as model:
                 model.load_observations(seqs)
-                model.cluster_observations(set_params=True)
                 model.train(maxIterations=39, update_topology=10)
                 results.append((name, dname, model.likelihood, model.AIC, model.BIC))
                 print(model)
@@ -48,5 +47,5 @@ def main():
     fs.close()
 
 if __name__ == "__main__":
-    multiprocessing.freeze_support()
+    multiprocessing.set_start_method('spawn')
     main()

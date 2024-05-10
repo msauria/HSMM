@@ -54,7 +54,7 @@ def main():
             fname='test_model.npz',
             seed=2001) as model:
         print(model)
-        seqs, states = model.generate_sequences(100, 10000)
+        seqs, states = model.generate_sequences(50, 5000)
         dwells = [[] for x in range(stateN)]
         dwell_indices = numpy.cumsum(model.dwells)
         for i, seq in enumerate(seqs):
@@ -106,7 +106,7 @@ def main():
 
 
 if __name__ == "__main__":
-    multiprocessing.freeze_support()
+    # multiprocessing.freeze_support()
     main()
 
 

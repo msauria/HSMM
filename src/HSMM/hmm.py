@@ -6,6 +6,7 @@ import multiprocessing
 import multiprocessing.managers
 from multiprocessing.resource_tracker import unregister
 from multiprocessing.shared_memory import SharedMemory
+import time
 
 import numpy as np
 from scipy.special import logsumexp
@@ -48,7 +49,8 @@ class HMM():
         else:
             if (not isinstance(transition_matrix, np.ndarray) or
                 transition_matrix.shape != (self.num_states, self.num_states)):
-                raise ValueError(f"The transition_matrix must be np.matrix of shape (num_states, num_states)")
+                raise ValueError(f"The transition_matrix must be np.matrix of " \
+                                  "shape (num_states, num_states)")
             self.transition_matrix = self.to_log(transition_matrix /
                                                  np.sum(transition_matrix,
                                                         axis=1, keepdims=True))
@@ -59,7 +61,8 @@ class HMM():
         else:
             if (not isinstance(transition_matrix, np.ndarray) or
                 initial_probabilities.shape != (self.num_states,)):
-                raise ValueError(f"The initial_probabilities must be a np vector of shape (num_states,)")
+                raise ValueError(f"The initial_probabilities must be a np " \
+                                  "vector of shape (num_states,)")
             self.initial_probabilities = self.to_log(initial_probabilities /
                                                      np.sum(initial_probabilities))
         self.num_obs = 0
@@ -73,16 +76,18 @@ class HMM():
         self.views = {}
         self.pool = multiprocessing.Pool(self.num_threads)
         self.smm = multiprocessing.managers.SharedMemoryManager()
+        self.smm.start()
         self._post_enter_actions()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.pool.close()
         self.pool.terminate()
-        # for view in self.views.values():
-        #     view.close()
-        #     view.unlink()
+        for view in self.views.values():
+            view.close()
+            view.unlink()
         self.smm.shutdown()
+        time.sleep(0.1)
         return
 
     def _post_enter_actions(self):
@@ -100,7 +105,8 @@ class HMM():
         return "\n".join(self.print_model())
 
     def print_model(self):
-        output = [f"{self.name} with {self.num_states} states and {self.num_distributions} distribution(s)\n"]
+        output = [f"{self.name} with {self.num_states} states and " \
+                  f"{self.num_distributions} distribution(s)\n"]
         output += self.print_states(self.distributions)
         output += self.print_transitions(self.transition_matrix)
         output += self.print_initprobs(self.initial_probabilities)
@@ -172,26 +178,31 @@ class HMM():
         return prod
 
     def make_shared_array(self, name, shape, dtype, data=None):
-        new_size = ((self.product(shape) * np.dtype(dtype).itemsize - 1) //
-                    4096 + 1) * 4096
-        if name in self.views and self.views[name].size == new_size:
-            return getattr(self, name)
-        if name in self.views:
-            self.delete_shared_array(name)
-        self.views[name] = self.smm.SharedMemory(create=True, size=new_size)
-        self.smm_map[name] = self.views[name].name
-        new_data = np.ndarray(shape, dtype, buffer=self.views[name].buf)
+        if ((name in self.views) and
+            (self.product(getattr(self, name).shape) == self.product(shape)) and
+            (np.dtype(getattr(self, name).dtype).itemsize == np.dtype(dtype).itemsize)):
+            new_data = getattr(self, name)
+        else:
+            if name in self.views:
+                old_shape = getattr(self, name).shape
+                self.delete_shared_array(name)
+            else:
+                old_shape = None
+            new_size = self.product(shape) * np.dtype(dtype).itemsize
+            self.views[name] = self.smm.SharedMemory(new_size)
+            self.smm_map[name] = self.views[name].name
+            new_data = np.ndarray(shape, dtype, buffer=self.views[name].buf)
         if data is not None:
             new_data[:] = data
         setattr(self, name, new_data)
         return new_data
 
     def delete_shared_array(self, name):
+        del self.__dict__[name]
         self.views[name].close()
         self.views[name].unlink()
         del self.views[name]
         del self.smm_map[name]
-        del self.__dict__[name]
         return
 
     @classmethod
@@ -205,7 +216,8 @@ class HMM():
         if (not isinstance(lengths, int) and
             not isintance(lengths, np.ndarray) and
             not isintance(lenths, list)):
-            raise ValueError("Lengths must be an int or list/array of length equal to the number of sequences")
+            raise ValueError("Lengths must be an int or list/array of length " \
+                             "equal to the number of sequences")
         if not isinstance(num_sequences, int) or num_sequences <= 0:
             raise ValueError("Number of sequences must be a positive integer")
         if isinstance(lengths, int):
@@ -214,7 +226,7 @@ class HMM():
             lengths = np.array(lengths, np.int32)
         futures = []
         indices = np.round(np.linspace(0, num_sequences,
-                                             self.num_threads + 1)).astype(np.int32)
+                                       self.num_threads + 1)).astype(np.int32)
         for i in range(indices.shape[0] - 1):
             s, e = indices[i:i+2]
             futures.append(self.pool.apply_async(
@@ -272,7 +284,8 @@ class HMM():
             if (not isinstance(O, np.ndarray) or
                 (O.shape[1] != self.num_distributions) or
                 (not O.dtype in [np.int32, np.float64])):
-                raise ValueError("Each sequence must be a integer np matrix of shape (X, num_distributions)")
+                raise ValueError("Each sequence must be a integer np matrix " \
+                                 "of shape (X, num_distributions)")
             n += O.shape[0]
         self.num_seqs = len(observations)
         self.num_obs = n
@@ -296,11 +309,13 @@ class HMM():
         self.make_thread_indices()
         self.set_dist_bounds()
         if initial_states is None:
-            initstates, _ = cluster_observations()
+            initstates, _ = self.cluster_observations()
         else:
             if isinstance(initial_states, list):
-                if len(initial_states) != self.num_seqs or sum([len(x) for x in initial_states]):
-                    raise ValueError("The initial states do not match the observation num/lengths")
+                if (len(initial_states) != self.num_seqs or
+                    sum([len(x) for x in initial_states])):
+                    raise ValueError("The initial states do not match the " \
+                                     "observation num/lengths")
                 initstates = np.concatenate(initial_states, axis=0)
         self.set_dist_estimates(initstates)
         return
@@ -434,12 +449,11 @@ class HMM():
                                np.float64)
         iteration = 0
         oldLikelihood = np.inf
-        newLikelihood = np.inf
+        self.likelihood = np.inf
         while True:
             iteration += 1
-            oldLikelihood = newLikelihood
-            newLikelihood = self.training_iteration(iteration, update, **kwargs)
-            self.likelihood = newLikelihood
+            oldLikelihood = self.likelihood
+            self.training_iteration(iteration, update, **kwargs)
             if maxIterations > 0 and iteration == maxIterations:
                 break
             # if newLikelihood > oldLikelihood:
@@ -447,30 +461,30 @@ class HMM():
             #           file=sys.stderr)
             #     break
             if iteration % 10 == 0:
-                print(f"Performed iteration {iteration} with loglikelihood {newLikelihood}",
+                print(f"Performed iteration {iteration} with loglikelihood {self.likelihood}",
                       file=sys.stderr)
-            # if math.fabs(oldLikelihood - newLikelihood) <= epsilon:
-            #     break
-        print(f"Training successfully completed after {iteration} iterations with loglikelihood {newLikelihood}",
+            if math.fabs(oldLikelihood - self.likelihood) <= epsilon:
+                break
+        print(f"Training successfully completed after {iteration} iterations " \
+              f"with loglikelihood {self.likelihood}",
               file=sys.stderr)
         p = self.num_free_parameters()
-        self.AIC = 2 * newLikelihood + 2 * p
-        self.BIC = 2 * newLikelihood + p * self.num_obs
+        self.AIC = 2 * self.likelihood + 2 * p
+        self.BIC = 2 * self.likelihood + p * self.num_obs
         print(f"AIC: {self.AIC}\nBIC: {self.BIC}", file=sys.stderr)
         return
 
     def training_iteration(self, iteration, update, **kwargs):
         self.calculate_probabilities()
         self.calculate_emissions()
-        newLikelihood = self.calculate_forwardpass()
+        self.likelihood = self.calculate_forwardpass()
         if iteration == 1:
-            print(f"Initial loglikelihood {newLikelihood}", file=sys.stderr)
+            print(f"Initial loglikelihood {self.likelihood}", file=sys.stderr)
         self.calculate_backwardpass()
         self.expectation_step()
         if update:
             self.maximization_step(iteration=iteration, **kwargs)
-        return newLikelihood
-
+        return
 
     def num_free_parameters(self):
         s = 0

@@ -143,9 +143,9 @@ class HSMM(HMM):
         prev_stateN = self.num_states
         nd_trans, nd_init, nd_dists = self.convert_dwell_to_nodwell()
         d_trans, d_init, d_dists = self.convert_nodwell_to_dwell(
-            dwell_times, nd_trans, nd_init, nd_dists)
+            dwells, nd_trans, nd_init, nd_dists)
 
-        self.dwells[:] = dwell_times
+        self.dwells[:] = dwells
         self.num_states = np.sum(self.dwells)
         self.sizes[0] = self.num_states
         self.make_shared_array('transition_matrix',
@@ -315,7 +315,8 @@ class HSMM(HMM):
             nd_trans[sIdx, sIdx] = 0
             nd_trans[sIdx, :] *= params['p'] / np.sum(nd_trans[sIdx, :])
             nd_trans[sIdx, sIdx] = 1 - params['p']
-        self.transition_matrix[:, :], _, _ = self.convert_nodwell_to_dwell(
+        self.transition_matrix[:, :]
+        d_trans, _, _ = self.convert_nodwell_to_dwell(
             self.dwells, transition_matrix=self.to_log(nd_trans))
         self.set_dwell_times(new_dwells)
         self.delete_shared_array('states')
