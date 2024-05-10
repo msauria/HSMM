@@ -72,16 +72,17 @@ class HMM():
         self.smm_map = {}
         self.views = {}
         self.pool = multiprocessing.Pool(self.num_threads)
+        self.smm = multiprocessing.managers.SharedMemoryManager()
         self._post_enter_actions()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.pool.close()
         self.pool.terminate()
-        for view in self.views.values():
-            view.close()
-            view.unlink()
-        # self.smm.shutdown()
+        # for view in self.views.values():
+        #     view.close()
+        #     view.unlink()
+        self.smm.shutdown()
         return
 
     def _post_enter_actions(self):
@@ -177,7 +178,7 @@ class HMM():
             return getattr(self, name)
         if name in self.views:
             self.delete_shared_array(name)
-        self.views[name] = SharedMemory(create=True, size=new_size)
+        self.views[name] = self.smm.SharedMemory(create=True, size=new_size)
         self.smm_map[name] = self.views[name].name
         new_data = np.ndarray(shape, dtype, buffer=self.views[name].buf)
         if data is not None:
@@ -190,6 +191,7 @@ class HMM():
         self.views[name].unlink()
         del self.views[name]
         del self.smm_map[name]
+        del self.__dict__[name]
         return
 
     @classmethod
@@ -293,14 +295,14 @@ class HMM():
         self.sizes[4] = self.num_maxes
         self.make_thread_indices()
         self.set_dist_bounds()
-        if not initial_states is None and not initial_states:
+        if initial_states is None:
+            initstates, _ = cluster_observations()
+        else:
             if isinstance(initial_states, list):
                 if len(initial_states) != self.num_seqs or sum([len(x) for x in initial_states]):
                     raise ValueError("The initial states do not match the observation num/lengths")
                 initstates = np.concatenate(initial_states, axis=0)
-            else:
-                initstates = self.RNG.choice(self.num_states, size=self.num_obs)
-            self.set_dist_estimates(initstates)
+        self.set_dist_estimates(initstates)
         return
 
     def make_thread_indices(self):
@@ -319,15 +321,13 @@ class HMM():
             self.thread_seq_indices) > 0)], self.thread_seq_indices[-1]].astype(np.int64)
         return
 
-    def cluster_observations(self, set_params=True):
+    def cluster_observations(self):
         if self.num_seqs == 0:
             raise RuntimeError("Observations must be loaded before running clustering")
         # Can replace random_state with self.RNG once scikit-learn upgrades from RandomState
         kmeans = KMeans(n_clusters=self.num_states, n_init='auto',
                         random_state=np.random.RandomState(self.RNG.bit_generator))
         states = kmeans.fit_predict(self.obs)
-        if set_params:
-            self.set_dist_estimates(states)
         return states, kmeans.cluster_centers_
 
     def set_dist_bounds(self):
