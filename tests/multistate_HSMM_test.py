@@ -86,7 +86,7 @@ def main():
             seed=2001) as model:
         model.set_dist_parameters(params)
         model.load_observations(seqs)
-        model.train(maxIterations=11, update_topology=3)
+        model.train(maxIterations=11, update_topology=1)
         counts = model.maximize_dwell_times().astype(numpy.float64)
         print(model)
         counts /= numpy.sum(counts, axis=1, keepdims=True)

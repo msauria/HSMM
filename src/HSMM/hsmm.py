@@ -315,9 +315,9 @@ class HSMM(HMM):
             nd_trans[sIdx, sIdx] = 0
             nd_trans[sIdx, :] *= params['p'] / np.sum(nd_trans[sIdx, :])
             nd_trans[sIdx, sIdx] = 1 - params['p']
-        self.transition_matrix[:, :]
         d_trans, _, _ = self.convert_nodwell_to_dwell(
             self.dwells, transition_matrix=self.to_log(nd_trans))
+        self.transition_matrix[:, :] = d_trans
         self.set_dwell_times(new_dwells)
         self.delete_shared_array('states')
         return dwell_counts
