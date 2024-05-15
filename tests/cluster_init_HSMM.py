@@ -12,7 +12,7 @@ from scipy.special import logsumexp
 def main():
     RNG = numpy.random.default_rng(34584)
     stateN = 5
-    distN = 2
+    distN = 3
     TM = numpy.zeros((stateN, stateN), numpy.float64)
     popN = 256
     p_bounds = numpy.linspace(0, 1, stateN + 2)
@@ -35,14 +35,14 @@ def main():
             e -= span * 0.05
             p = RNG.random() * (e - s) + s
             params[-1].append({'n':popN, 'p': p})
-        dwell_times.append(RNG.poisson(2))
+        dwell_times.append(RNG.poisson(1) + 1)
     IP = RNG.random(stateN)
     IP /= numpy.sum(IP)
 
     with HSMM.HSMM(
             num_states=stateN,
             num_threads=11,
-            distributions=["BI", "BI"],
+            distributions=["BI" for x in range(distN)],
             transition_matrix=TM,
             initial_probabilities=IP,
             seed=2001) as model:
@@ -81,13 +81,14 @@ def main():
     with HSMM.HSMM(
             num_states=stateN,
             num_threads=11,
-            distributions=["BI", "BI"],
+            distributions=["BI" for x in range(distN)],
             transition_matrix=None,
             initial_probabilities=None,
             seed=2001) as model:
         model.load_observations(seqs)
         model.cluster_observations()
-        model.train(maxIterations=11, update_topology=3)
+        model.set_dwell_times(dwell_times)
+        model.train(maxIterations=11, update_topology=20)
         counts = model.maximize_dwell_times().astype(numpy.float64)
         print(model)
         counts /= numpy.sum(counts, axis=1, keepdims=True)
@@ -103,10 +104,15 @@ def main():
                 color=cmap(i), linestyle='dashed')
         plt.savefig('test_kest.pdf')
         plt.close()
+        remapping = numpy.repeat(numpy.arange(stateN), dwell_times)
+        new_states, _ = model.viterbi()
+        states = remapping[numpy.concatenate(states, axis=0)]
+        new_states = remapping[numpy.concatenate(new_states, axis=0)]
+        counts = numpy.bincount(states * stateN + new_states, minlength=stateN**2).reshape(stateN, stateN)
+        print(counts)
 
 
 if __name__ == "__main__":
-    # multiprocessing.freeze_support()
     main()
 
 
